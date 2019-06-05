@@ -934,9 +934,6 @@ UINT WINPOS_MinMaximize( HWND hwnd, UINT cmd, LPRECT rect )
     wpl.length = sizeof(wpl);
     GetWindowPlacement( hwnd, &wpl );
 
-    if (HOOK_CallHooks( WH_CBT, HCBT_MINMAX, (WPARAM)hwnd, cmd, TRUE ))
-        return SWP_NOSIZE | SWP_NOMOVE;
-
     if (IsIconic( hwnd ))
     {
         switch (cmd)
@@ -1032,6 +1029,65 @@ UINT WINPOS_MinMaximize( HWND hwnd, UINT cmd, LPRECT rect )
     return swpFlags;
 }
 
+/***********************************************************************
+ *        is_show_window_done
+ *
+ * A helper function for ShowWindow and ShowWindowAsync for checking if
+ * a window already has the requested style.
+ */
+static INT is_show_window_done( HWND hwnd, INT cmd )
+{
+    LONG style = GetWindowLongW( hwnd, GWL_STYLE );
+    BOOL is_visible = (style & WS_VISIBLE) != 0;
+
+    switch (cmd) {
+    case SW_HIDE:
+        if (!is_visible)
+            return FALSE;
+        break;
+    case SW_SHOW:
+        if (is_visible)
+            return TRUE;
+        break;
+    case SW_SHOWMINNOACTIVE:
+    case SW_MINIMIZE:
+    case SW_FORCEMINIMIZE:
+    case SW_SHOWMINIMIZED:
+        if (HOOK_CallHooks( WH_CBT, HCBT_MINMAX, (WPARAM)hwnd, cmd, TRUE ))
+            return is_visible;
+
+        if (is_visible && (style & WS_MINIMIZE))
+            return TRUE;
+        break;
+    case SW_SHOWMAXIMIZED:
+        if (HOOK_CallHooks( WH_CBT, HCBT_MINMAX, (WPARAM)hwnd, cmd, TRUE ))
+            return is_visible;
+
+        if (is_visible && (style & WS_MAXIMIZE))
+            return TRUE;
+        break;
+    case SW_SHOWNA:
+        break;
+    case SW_SHOWNOACTIVATE:
+    case SW_RESTORE:
+    case SW_SHOWNORMAL:
+    case SW_SHOWDEFAULT:
+        if (style & (WS_MINIMIZE | WS_MAXIMIZE))
+        {
+            if (HOOK_CallHooks( WH_CBT, HCBT_MINMAX, (WPARAM)hwnd, cmd, TRUE ))
+                return is_visible;
+        }
+        else if (is_visible)
+        {
+            return TRUE;
+        }
+        break;
+    default:
+        return is_visible;
+    }
+
+    return -1;
+}
 
 /***********************************************************************
  *              show_window
@@ -1056,7 +1112,6 @@ static BOOL show_window( HWND hwnd, INT cmd )
     switch(cmd)
     {
         case SW_HIDE:
-            if (!wasVisible) goto done;
             showFlag = FALSE;
             swp |= SWP_HIDEWINDOW | SWP_NOSIZE | SWP_NOMOVE;
             if (style & WS_CHILD) swp |= SWP_NOACTIVATE | SWP_NOZORDER;
@@ -1070,14 +1125,12 @@ static BOOL show_window( HWND hwnd, INT cmd )
 	case SW_SHOWMINIMIZED:
             swp |= SWP_SHOWWINDOW | SWP_FRAMECHANGED;
             swp |= WINPOS_MinMaximize( hwnd, cmd, &newPos );
-            if ((style & WS_MINIMIZE) && wasVisible) goto done;
 	    break;
 
 	case SW_SHOWMAXIMIZED: /* same as SW_MAXIMIZE */
             if (!wasVisible) swp |= SWP_SHOWWINDOW;
             swp |= SWP_FRAMECHANGED;
             swp |= WINPOS_MinMaximize( hwnd, SW_MAXIMIZE, &newPos );
-            if ((style & WS_MAXIMIZE) && wasVisible) goto done;
             break;
 
 	case SW_SHOWNA:
@@ -1085,7 +1138,6 @@ static BOOL show_window( HWND hwnd, INT cmd )
             if (style & WS_CHILD) swp |= SWP_NOZORDER;
             break;
 	case SW_SHOW:
-            if (wasVisible) goto done;
 	    swp |= SWP_SHOWWINDOW | SWP_NOSIZE | SWP_NOMOVE;
             if (style & WS_CHILD) swp |= SWP_NOACTIVATE | SWP_NOZORDER;
 	    break;
@@ -1105,7 +1157,6 @@ static BOOL show_window( HWND hwnd, INT cmd )
             }
             else
             {
-                if (wasVisible) goto done;
                 swp |= SWP_NOSIZE | SWP_NOMOVE;
             }
             if (style & WS_CHILD && !(swp & SWP_STATECHANGED)) swp |= SWP_NOACTIVATE | SWP_NOZORDER;
@@ -1199,12 +1250,16 @@ done:
 BOOL WINAPI ShowWindowAsync( HWND hwnd, INT cmd )
 {
     HWND full_handle;
+    INT ret;
 
     if (is_broadcast(hwnd))
     {
         SetLastError( ERROR_INVALID_PARAMETER );
         return FALSE;
     }
+
+    if ((ret = is_show_window_done( hwnd, cmd )) != -1)
+        return ret;
 
     if ((full_handle = WIN_IsCurrentThread( hwnd )))
         return show_window( full_handle, cmd );
@@ -1219,17 +1274,19 @@ BOOL WINAPI ShowWindowAsync( HWND hwnd, INT cmd )
 BOOL WINAPI ShowWindow( HWND hwnd, INT cmd )
 {
     HWND full_handle;
+    INT ret;
 
     if (is_broadcast(hwnd))
     {
         SetLastError( ERROR_INVALID_PARAMETER );
         return FALSE;
     }
+
+    if ((ret = is_show_window_done( hwnd, cmd )) != -1)
+        return ret;
+
     if ((full_handle = WIN_IsCurrentThread( hwnd )))
         return show_window( full_handle, cmd );
-
-    if ((cmd == SW_HIDE) && !(GetWindowLongW( hwnd, GWL_STYLE ) & WS_VISIBLE))
-        return FALSE;
 
     return SendMessageW( hwnd, WM_WINE_SHOWWINDOW, cmd, 0 );
 }

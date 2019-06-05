@@ -1683,7 +1683,10 @@ HWND WIN_CreateWindowEx( CREATESTRUCTW *cs, LPCWSTR className, HINSTANCE module,
         RECT newPos;
         UINT swFlag = (style & WS_MINIMIZE) ? SW_MINIMIZE : SW_MAXIMIZE;
 
-        swFlag = WINPOS_MinMaximize( hwnd, swFlag, &newPos );
+        if (HOOK_CallHooks( WH_CBT, HCBT_MINMAX, (WPARAM)hwnd, swFlag, TRUE ))
+            swFlag = SWP_NOSIZE | SWP_NOMOVE;
+        else
+            swFlag = WINPOS_MinMaximize( hwnd, swFlag, &newPos );
         swFlag |= SWP_FRAMECHANGED; /* Frame always gets changed */
         if (!(style & WS_VISIBLE) || (style & WS_CHILD) || GetActiveWindow()) swFlag |= SWP_NOACTIVATE;
         SetWindowPos( hwnd, 0, newPos.left, newPos.top, newPos.right - newPos.left,

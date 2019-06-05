@@ -5041,12 +5041,29 @@ static void test_WM_DEVICECHANGE(HWND hwnd)
     }
 }
 
-static DWORD CALLBACK show_window_thread(LPVOID arg)
+static DWORD CALLBACK hide_window_thread(LPVOID arg)
 {
    HWND hwnd = arg;
 
    /* function will not return if ShowWindow(SW_HIDE) calls SendMessage() */
    ok(ShowWindow(hwnd, SW_HIDE) == FALSE, "ShowWindow(SW_HIDE) expected FALSE\n");
+
+   return 0;
+}
+
+struct show_window_thread_data
+{
+    const char *context;
+    HWND hwnd;
+    int cmd;
+};
+
+static DWORD CALLBACK show_window_thread(LPVOID arg)
+{
+   struct show_window_thread_data *d = arg;
+
+   /* function will not return if ShowWindow() calls SendMessage() */
+   ok(ShowWindow(d->hwnd, d->cmd) != FALSE, "%s: expected nonzero\n", d->context, d->cmd);
 
    return 0;
 }
@@ -5080,6 +5097,7 @@ static void test_messages(void)
     LRESULT res;
     POINT pos;
     BOOL ret;
+    struct show_window_thread_data swtd;
 
     flush_sequence();
 
@@ -5112,7 +5130,7 @@ static void test_messages(void)
     ok_sequence(WmEmptySeq, "ShowWindow(SW_HIDE):overlapped", FALSE);
 
     /* test ShowWindow(SW_HIDE) on a hidden window -  multi-threaded */
-    hthread = CreateThread(NULL, 0, show_window_thread, hwnd, 0, &tid);
+    hthread = CreateThread(NULL, 0, hide_window_thread, hwnd, 0, &tid);
     ok(hthread != NULL, "CreateThread failed, error %d\n", GetLastError());
     ok(WaitForSingleObject(hthread, INFINITE) == WAIT_OBJECT_0, "WaitForSingleObject failed\n");
     CloseHandle(hthread);
@@ -5134,6 +5152,16 @@ static void test_messages(void)
 
     if (GetWindowLongW( hwnd, GWL_STYLE ) & WS_MAXIMIZE)
     {
+        swtd.context = "ShowWindow(SW_SHOWMAXIMIZED):overlapped already maximized";
+        swtd.cmd = SW_SHOWMAXIMIZED;
+        swtd.hwnd = hwnd;
+        hthread = CreateThread(NULL, 0, show_window_thread, &swtd, 0, &tid);
+        ok(hthread != NULL, "CreateThread failed, error %d\n", GetLastError());
+        ok(WaitForSingleObject(hthread, INFINITE) == WAIT_OBJECT_0, "WaitForSingleObject failed\n");
+        CloseHandle(hthread);
+        flush_events();
+        ok_sequence(WmOptionalPaint, "ShowWindow(SW_SHOWMAXIMIZED):overlapped already maximized", FALSE);
+
         ShowWindow(hwnd, SW_RESTORE);
         flush_events();
         ok_sequence(WmShowRestoreMaxOverlappedSeq, "ShowWindow(SW_RESTORE):overlapped", TRUE);
@@ -5147,6 +5175,16 @@ static void test_messages(void)
 
     if (GetWindowLongW( hwnd, GWL_STYLE ) & WS_MINIMIZE)
     {
+        swtd.context = "ShowWindow(SW_MINIMIZE):overlapped already minimized";
+        swtd.cmd = SW_MINIMIZE;
+        swtd.hwnd = hwnd;
+        hthread = CreateThread(NULL, 0, show_window_thread, &swtd, 0, &tid);
+        ok(hthread != NULL, "CreateThread failed, error %d\n", GetLastError());
+        ok(WaitForSingleObject(hthread, INFINITE) == WAIT_OBJECT_0, "WaitForSingleObject failed\n");
+        CloseHandle(hthread);
+        flush_events();
+        ok_sequence(WmOptionalPaint, "ShowWindow(SW_MINIMIZE):overlapped already minimized", FALSE);
+
         ShowWindow(hwnd, SW_RESTORE);
         flush_events();
         ok_sequence(WmShowRestoreMinOverlappedSeq, "ShowWindow(SW_RESTORE):overlapped", TRUE);
@@ -5154,6 +5192,16 @@ static void test_messages(void)
     }
 
     ShowWindow(hwnd, SW_SHOW);
+    flush_events();
+    ok_sequence(WmOptionalPaint, "ShowWindow(SW_SHOW):overlapped already visible", FALSE);
+
+    swtd.context = "ShowWindow(SW_SHOW):overlapped already visible";
+    swtd.cmd = SW_SHOW;
+    swtd.hwnd = hwnd;
+    hthread = CreateThread(NULL, 0, show_window_thread, &swtd, 0, &tid);
+    ok(hthread != NULL, "CreateThread failed, error %d\n", GetLastError());
+    ok(WaitForSingleObject(hthread, INFINITE) == WAIT_OBJECT_0, "WaitForSingleObject failed\n");
+    CloseHandle(hthread);
     flush_events();
     ok_sequence(WmOptionalPaint, "ShowWindow(SW_SHOW):overlapped already visible", FALSE);
 
