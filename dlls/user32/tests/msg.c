@@ -5041,7 +5041,7 @@ static void test_WM_DEVICECHANGE(HWND hwnd)
     }
 }
 
-static DWORD CALLBACK show_window_thread(LPVOID arg)
+static DWORD CALLBACK hide_window_thread(LPVOID arg)
 {
    HWND hwnd = arg;
 
@@ -5112,7 +5112,7 @@ static void test_messages(void)
     ok_sequence(WmEmptySeq, "ShowWindow(SW_HIDE):overlapped", FALSE);
 
     /* test ShowWindow(SW_HIDE) on a hidden window -  multi-threaded */
-    hthread = CreateThread(NULL, 0, show_window_thread, hwnd, 0, &tid);
+    hthread = CreateThread(NULL, 0, hide_window_thread, hwnd, 0, &tid);
     ok(hthread != NULL, "CreateThread failed, error %d\n", GetLastError());
     ok(WaitForSingleObject(hthread, INFINITE) == WAIT_OBJECT_0, "WaitForSingleObject failed\n");
     CloseHandle(hthread);
@@ -13421,6 +13421,143 @@ if (0) /* FIXME: Wine behaves completely different here */
     flush_events();
 }
 
+struct show_window_thread_data
+{
+    const char *context;
+    HWND hwnd;
+    int cmd;
+};
+
+static DWORD CALLBACK show_window_thread(LPVOID arg)
+{
+   struct show_window_thread_data *d = arg;
+
+   ok(ShowWindow(d->hwnd, d->cmd) != FALSE, "%s: expected nonzero\n", d->context, d->cmd);
+
+   return 0;
+}
+
+static void test_ShowWindow_multithreaded(void)
+{
+    static const struct
+    {
+        const char context[255];
+        DWORD initial_style;
+        int cmd;
+        BOOL expect_messages;
+        DWORD expected_style;
+    } sw[] = {
+        { "ShowWindow(SW_SHOW):restored",
+          WS_VISIBLE, SW_SHOW, FALSE, WS_VISIBLE },
+        { "ShowWindow(SW_SHOWNOACTIVATE):restored",
+          WS_VISIBLE, SW_SHOWNOACTIVATE, FALSE, WS_VISIBLE },
+        { "ShowWindow(SW_RESTORE):restored",
+          WS_VISIBLE, SW_RESTORE, FALSE, WS_VISIBLE },
+        { "ShowWindow(SW_SHOWNORMAL):restored",
+          WS_VISIBLE, SW_SHOWNORMAL, FALSE, WS_VISIBLE },
+        { "ShowWindow(SW_SHOWDEFAULT):restored",
+          WS_VISIBLE, SW_SHOWDEFAULT, FALSE, WS_VISIBLE },
+        { "ShowWindow(SW_SHOWMINNOACTIVE):restored",
+          WS_VISIBLE, SW_SHOWMINNOACTIVE, TRUE, WS_VISIBLE|WS_MINIMIZE },
+        { "ShowWindow(SW_MINIMIZE):restored",
+          WS_VISIBLE, SW_MINIMIZE, TRUE, WS_VISIBLE|WS_MINIMIZE },
+        { "ShowWindow(SW_SHOWMINIMIZED):restored",
+          WS_VISIBLE, SW_SHOWMINIMIZED, TRUE, WS_VISIBLE|WS_MINIMIZE },
+        { "ShowWindow(SW_SHOWMAXIMIZED):restored",
+          WS_VISIBLE, SW_SHOWMAXIMIZED, TRUE, WS_VISIBLE|WS_MAXIMIZE },
+
+        { "ShowWindow(SW_SHOW):minimized",
+          WS_VISIBLE|WS_MINIMIZE, SW_SHOW, FALSE, WS_VISIBLE|WS_MINIMIZE },
+        { "ShowWindow(SW_SHOWNOACTIVATE):minimized",
+          WS_VISIBLE|WS_MINIMIZE, SW_SHOWNOACTIVATE, TRUE, WS_VISIBLE },
+        { "ShowWindow(SW_RESTORE):minimized",
+          WS_VISIBLE|WS_MINIMIZE, SW_RESTORE, TRUE, WS_VISIBLE },
+        { "ShowWindow(SW_SHOWNORMAL):minimized",
+          WS_VISIBLE|WS_MINIMIZE, SW_SHOWNORMAL, TRUE, WS_VISIBLE },
+        { "ShowWindow(SW_SHOWDEFAULT):minimized",
+          WS_VISIBLE|WS_MINIMIZE, SW_SHOWDEFAULT, TRUE, WS_VISIBLE },
+        { "ShowWindow(SW_SHOWMINNOACTIVE):minimized",
+          WS_VISIBLE|WS_MINIMIZE, SW_SHOWMINNOACTIVE, FALSE, WS_VISIBLE|WS_MINIMIZE },
+        { "ShowWindow(SW_MINIMIZE):minimized",
+          WS_VISIBLE|WS_MINIMIZE, SW_MINIMIZE, FALSE, WS_VISIBLE|WS_MINIMIZE },
+        { "ShowWindow(SW_SHOWMINIMIZED):minimized",
+          WS_VISIBLE|WS_MINIMIZE, SW_SHOWMINIMIZED, FALSE, WS_VISIBLE|WS_MINIMIZE },
+        { "ShowWindow(SW_FORCEMINIMIZE):minimized",
+          WS_VISIBLE|WS_MINIMIZE, SW_FORCEMINIMIZE, FALSE, WS_VISIBLE|WS_MINIMIZE },
+        { "ShowWindow(SW_SHOWMAXIMIZED):minimized",
+          WS_VISIBLE|WS_MINIMIZE, SW_SHOWMAXIMIZED, TRUE, WS_VISIBLE|WS_MAXIMIZE },
+
+        { "ShowWindow(SW_SHOW):maximized",
+          WS_VISIBLE|WS_MAXIMIZE, SW_SHOW, FALSE, WS_VISIBLE|WS_MAXIMIZE },
+        { "ShowWindow(SW_SHOWNOACTIVATE):maximized",
+          WS_VISIBLE|WS_MAXIMIZE, SW_SHOWNOACTIVATE, TRUE, WS_VISIBLE },
+        { "ShowWindow(SW_RESTORE):maximized",
+          WS_VISIBLE|WS_MAXIMIZE, SW_RESTORE, TRUE, WS_VISIBLE },
+        { "ShowWindow(SW_SHOWNORMAL):maximized",
+          WS_VISIBLE|WS_MAXIMIZE, SW_SHOWNORMAL, TRUE, WS_VISIBLE },
+        { "ShowWindow(SW_SHOWDEFAULT):maximized",
+          WS_VISIBLE|WS_MAXIMIZE, SW_SHOWDEFAULT, TRUE, WS_VISIBLE },
+        { "ShowWindow(SW_SHOWMINNOACTIVE):maximized",
+          WS_VISIBLE|WS_MAXIMIZE, SW_SHOWMINNOACTIVE, TRUE, WS_VISIBLE|WS_MINIMIZE },
+        { "ShowWindow(SW_MINIMIZE):maximized",
+          WS_VISIBLE|WS_MAXIMIZE, SW_MINIMIZE, TRUE, WS_VISIBLE|WS_MINIMIZE },
+        { "ShowWindow(SW_SHOWMINIMIZED):maximized",
+          WS_VISIBLE|WS_MAXIMIZE, SW_SHOWMINIMIZED, TRUE, WS_VISIBLE|WS_MINIMIZE },
+        { "ShowWindow(SW_SHOWMAXIMIZED):maximized",
+          WS_VISIBLE|WS_MAXIMIZE, SW_SHOWMAXIMIZED, FALSE, WS_VISIBLE|WS_MAXIMIZE },
+    };
+
+    DWORD style, tid;
+    HANDLE hthread;
+    HWND hwnd;
+    LPARAM ret;
+    MSG msg;
+    int i;
+    struct show_window_thread_data swtd;
+
+    for (i = 0; i < ARRAY_SIZE(sw); ++i)
+    {
+        hwnd = CreateWindowExA(0, "ShowWindowClass", NULL, WS_BASE | sw[i].initial_style,
+                               120, 120, 90, 90,
+                               0, 0, 0, NULL);
+        assert(hwnd);
+
+        swtd.context = sw[i].context;
+        swtd.hwnd = hwnd;
+        swtd.cmd = sw[i].cmd;
+        hthread = CreateThread(NULL, 0, show_window_thread, &swtd, 0, &tid);
+        ok(hthread != NULL, "%s: CreateThread failed, error %d\n", GetLastError(), sw[i].context);
+        if (sw[i].expect_messages)
+        {
+            /* if events are not processed, WaitForSingleObject would time out */
+            while (1)
+            {
+                switch (MsgWaitForMultipleObjects( 1, &hthread, FALSE, INFINITE, QS_ALLINPUT )) {
+                case WAIT_OBJECT_0:
+                    goto Lexit_loop;
+                case WAIT_OBJECT_0+1:
+                    while (PeekMessageA( &msg, 0, 0, 0, PM_REMOVE ))
+                        DispatchMessageA( &msg );
+                    break;
+                }
+            }
+        } else {
+            ok(WaitForSingleObject(hthread, 3000) == WAIT_OBJECT_0,
+               "%s: WaitForSingleObject failed\n", sw[i].context);
+        }
+Lexit_loop:
+        CloseHandle(hthread);
+
+        style = GetWindowLongA(hwnd, GWL_STYLE) & ~WS_BASE;
+        ok(style == sw[i].expected_style, "%s: expected style %08x, got %08x\n",
+           sw[i].context, sw[i].expected_style, style);
+
+        DestroyWindow(hwnd);
+    }
+
+    flush_events();
+}
+
 static INT_PTR WINAPI test_dlg_proc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     struct recvd_message msg;
@@ -17748,6 +17885,7 @@ START_TEST(msg)
     test_PostMessage();
     test_broadcast();
     test_ShowWindow();
+    test_ShowWindow_multithreaded();
     test_PeekMessage();
     test_PeekMessage2();
     test_PeekMessage3();

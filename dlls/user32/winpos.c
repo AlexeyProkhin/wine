@@ -1219,6 +1219,7 @@ BOOL WINAPI ShowWindowAsync( HWND hwnd, INT cmd )
 BOOL WINAPI ShowWindow( HWND hwnd, INT cmd )
 {
     HWND full_handle;
+    LONG style;
 
     if (is_broadcast(hwnd))
     {
@@ -1228,8 +1229,32 @@ BOOL WINAPI ShowWindow( HWND hwnd, INT cmd )
     if ((full_handle = WIN_IsCurrentThread( hwnd )))
         return show_window( full_handle, cmd );
 
-    if ((cmd == SW_HIDE) && !(GetWindowLongW( hwnd, GWL_STYLE ) & WS_VISIBLE))
-        return FALSE;
+    style = GetWindowLongW( hwnd, GWL_STYLE );
+    switch (cmd) {
+    case SW_HIDE:
+        if (!(style & WS_VISIBLE))
+            return FALSE;
+        break;
+    case SW_SHOW:
+        return TRUE;
+    case SW_SHOWMINNOACTIVE:
+    case SW_MINIMIZE:
+    case SW_SHOWMINIMIZED:
+        if (style & WS_MINIMIZE)
+            return TRUE;
+        break;
+    case SW_SHOWMAXIMIZED:
+        if (style & WS_MAXIMIZE)
+            return TRUE;
+        break;
+    case SW_SHOWNOACTIVATE:
+    case SW_RESTORE:
+    case SW_SHOWNORMAL:
+    case SW_SHOWDEFAULT:
+        if ((style & WS_VISIBLE) && !(style & WS_MINIMIZE) && !(style & WS_MAXIMIZE))
+            return TRUE;
+        break;
+    }
 
     return SendMessageW( hwnd, WM_WINE_SHOWWINDOW, cmd, 0 );
 }
