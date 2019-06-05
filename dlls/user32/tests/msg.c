@@ -5041,12 +5041,22 @@ static void test_WM_DEVICECHANGE(HWND hwnd)
     }
 }
 
-static DWORD CALLBACK show_window_thread(LPVOID arg)
+static DWORD CALLBACK hide_window_thread(LPVOID arg)
 {
    HWND hwnd = arg;
 
    /* function will not return if ShowWindow(SW_HIDE) calls SendMessage() */
    ok(ShowWindow(hwnd, SW_HIDE) == FALSE, "ShowWindow(SW_HIDE) expected FALSE\n");
+
+   return 0;
+}
+
+static DWORD CALLBACK show_window_thread(LPVOID arg)
+{
+   HWND hwnd = arg;
+
+   /* function will not return if ShowWindow(SW_SHOW) calls SendMessage() */
+   ok(ShowWindow(hwnd, SW_SHOW) != FALSE, "ShowWindow(SW_SHOW) expected nonzero\n");
 
    return 0;
 }
@@ -5112,7 +5122,7 @@ static void test_messages(void)
     ok_sequence(WmEmptySeq, "ShowWindow(SW_HIDE):overlapped", FALSE);
 
     /* test ShowWindow(SW_HIDE) on a hidden window -  multi-threaded */
-    hthread = CreateThread(NULL, 0, show_window_thread, hwnd, 0, &tid);
+    hthread = CreateThread(NULL, 0, hide_window_thread, hwnd, 0, &tid);
     ok(hthread != NULL, "CreateThread failed, error %d\n", GetLastError());
     ok(WaitForSingleObject(hthread, INFINITE) == WAIT_OBJECT_0, "WaitForSingleObject failed\n");
     CloseHandle(hthread);
@@ -5153,7 +5163,16 @@ static void test_messages(void)
         flush_sequence();
     }
 
+    /* test ShowWindow(SW_SHOW) on a visible window - single threaded */
     ShowWindow(hwnd, SW_SHOW);
+    flush_events();
+    ok_sequence(WmOptionalPaint, "ShowWindow(SW_SHOW):overlapped already visible", FALSE);
+
+    /* test ShowWindow(SW_SHOW) on a visible window - multi-threaded */
+    hthread = CreateThread(NULL, 0, show_window_thread, hwnd, 0, &tid);
+    ok(hthread != NULL, "CreateThread failed, error %d\n", GetLastError());
+    ok(WaitForSingleObject(hthread, INFINITE) == WAIT_OBJECT_0, "WaitForSingleObject failed\n");
+    CloseHandle(hthread);
     flush_events();
     ok_sequence(WmOptionalPaint, "ShowWindow(SW_SHOW):overlapped already visible", FALSE);
 
