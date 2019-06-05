@@ -5041,16 +5041,6 @@ static void test_WM_DEVICECHANGE(HWND hwnd)
     }
 }
 
-static DWORD CALLBACK show_window_thread(LPVOID arg)
-{
-   HWND hwnd = arg;
-
-   /* function will not return if ShowWindow(SW_HIDE) calls SendMessage() */
-   ok(ShowWindow(hwnd, SW_HIDE) == FALSE, "ShowWindow(SW_HIDE) expected FALSE\n");
-
-   return 0;
-}
-
 /* Helper function to easier test SetWindowPos messages */
 #define test_msg_setpos( expected_list, flags, todo ) \
         test_msg_setpos_( (expected_list), (flags), (todo), __FILE__, __LINE__)
@@ -5071,8 +5061,6 @@ static void test_msg_setpos_(const struct message *expected_list, UINT flags, BO
 /* test if we receive the right sequence of messages */
 static void test_messages(void)
 {
-    DWORD tid;
-    HANDLE hthread;
     HWND hwnd, hparent, hchild;
     HWND hchild2, hbutton;
     HMENU hmenu;
@@ -5108,14 +5096,6 @@ static void test_messages(void)
 
     /* test ShowWindow(SW_HIDE) on a hidden window - single threaded */
     ok(ShowWindow(hwnd, SW_HIDE) == FALSE, "ShowWindow(SW_HIDE) expected FALSE\n");
-    flush_events();
-    ok_sequence(WmEmptySeq, "ShowWindow(SW_HIDE):overlapped", FALSE);
-
-    /* test ShowWindow(SW_HIDE) on a hidden window -  multi-threaded */
-    hthread = CreateThread(NULL, 0, show_window_thread, hwnd, 0, &tid);
-    ok(hthread != NULL, "CreateThread failed, error %d\n", GetLastError());
-    ok(WaitForSingleObject(hthread, INFINITE) == WAIT_OBJECT_0, "WaitForSingleObject failed\n");
-    CloseHandle(hthread);
     flush_events();
     ok_sequence(WmEmptySeq, "ShowWindow(SW_HIDE):overlapped", FALSE);
 
@@ -13180,6 +13160,14 @@ static const struct message WmShowMaximized_3[] = {
     { 0 }
 };
 
+static const char * const sw_cmd_name[13] =
+{
+    "SW_HIDE", "SW_SHOWNORMAL", "SW_SHOWMINIMIZED", "SW_SHOWMAXIMIZED",
+    "SW_SHOWNOACTIVATE", "SW_SHOW", "SW_MINIMIZE", "SW_SHOWMINNOACTIVE",
+    "SW_SHOWNA", "SW_RESTORE", "SW_SHOWDEFAULT", "SW_FORCEMINIMIZE",
+    "SW_NORMALNA" /* 0xCC */
+};
+
 static void test_ShowWindow(void)
 {
     /* ShowWindow commands in random order */
@@ -13366,13 +13354,6 @@ static void test_ShowWindow(void)
 
     for (i = 0; i < ARRAY_SIZE(sw); i++)
     {
-        static const char * const sw_cmd_name[13] =
-        {
-            "SW_HIDE", "SW_SHOWNORMAL", "SW_SHOWMINIMIZED", "SW_SHOWMAXIMIZED",
-            "SW_SHOWNOACTIVATE", "SW_SHOW", "SW_MINIMIZE", "SW_SHOWMINNOACTIVE",
-            "SW_SHOWNA", "SW_RESTORE", "SW_SHOWDEFAULT", "SW_FORCEMINIMIZE",
-            "SW_NORMALNA" /* 0xCC */
-        };
         char comment[64];
         INT idx; /* index into the above array of names */
 
@@ -13417,6 +13398,86 @@ if (0) /* FIXME: Wine behaves completely different here */
         ok(EqualRect(&win_rc, &wp.rcNormalPosition), "expected %s got %s\n",
            wine_dbgstr_rect(&win_rc), wine_dbgstr_rect(&wp.rcNormalPosition));
     }
+    DestroyWindow(hwnd);
+    flush_events();
+}
+
+struct show_window_thread_data
+{
+    const char *comment;
+    HWND hwnd;
+    int cmd;
+    BOOL ret;
+};
+
+static DWORD CALLBACK show_window_thread(LPVOID arg)
+{
+   struct show_window_thread_data *d = arg;
+   BOOL ret;
+
+   /* function will not return if ShowWindow() calls SendMessage() */
+   ret = ShowWindow(d->hwnd, d->cmd);
+   ok(!ret == !d->ret, "%s: expected ret %u, got %u\n", d->comment, d->ret, ret);
+
+   return 0;
+}
+
+static void test_ShowWindow_multithreaded(void)
+{
+    static const struct
+    {
+        INT initial_cmd; /* ShowWindow command to apply before the test */
+        INT cmd; /* ShowWindow command to apply in a thread */
+        BOOL ret; /* ShowWindow return value */
+    } sw[] = {
+        { SW_HIDE, SW_HIDE, FALSE },
+        { SW_RESTORE, SW_SHOW, TRUE },
+        { SW_RESTORE, SW_SHOWNOACTIVATE, TRUE },
+        { SW_RESTORE, SW_RESTORE, TRUE },
+        { SW_RESTORE, SW_SHOWNORMAL, TRUE },
+        { SW_RESTORE, SW_SHOWDEFAULT, TRUE },
+        { SW_MINIMIZE, SW_SHOW, TRUE },
+        { SW_MINIMIZE, SW_SHOWMINNOACTIVE, TRUE },
+        { SW_MINIMIZE, SW_MINIMIZE, TRUE },
+        { SW_MINIMIZE, SW_SHOWMINIMIZED, TRUE },
+        { SW_MINIMIZE, SW_FORCEMINIMIZE, TRUE },
+        { SW_SHOWMAXIMIZED, SW_SHOW, TRUE },
+        { SW_SHOWMAXIMIZED, SW_SHOWMAXIMIZED, TRUE },
+    };
+
+    DWORD tid;
+    HANDLE hthread;
+    HWND hwnd;
+    int i;
+    struct show_window_thread_data swtd;
+
+    hwnd = CreateWindowExA(0, "ShowWindowClass", NULL, WS_OVERLAPPEDWINDOW,
+                          120, 120, 90, 90,
+                          0, 0, 0, NULL);
+    assert(hwnd);
+
+    for (i = 0; i < ARRAY_SIZE(sw); ++i)
+    {
+        char comment[64];
+        sprintf(comment, "%d: ShowWindow(%s --> %s)", i+1, sw_cmd_name[sw[i].initial_cmd], sw_cmd_name[sw[i].cmd]);
+
+        ShowWindow(hwnd, sw[i].initial_cmd);
+        flush_events();
+        flush_sequence();
+
+        swtd.comment = comment;
+        swtd.hwnd = hwnd;
+        swtd.cmd = sw[i].cmd;
+        swtd.ret = sw[i].ret;
+        hthread = CreateThread(NULL, 0, show_window_thread, &swtd, 0, &tid);
+        ok(hthread != NULL, "%d: CreateThread failed, error %d\n", i, GetLastError());
+        ok(WaitForSingleObject(hthread, 3000) == WAIT_OBJECT_0, "%d: WaitForSingleObject failed\n", i);
+        CloseHandle(hthread);
+
+        flush_events();
+        ok_sequence(WmOptionalPaint, comment, FALSE);
+    }
+
     DestroyWindow(hwnd);
     flush_events();
 }
@@ -17748,6 +17809,7 @@ START_TEST(msg)
     test_PostMessage();
     test_broadcast();
     test_ShowWindow();
+    test_ShowWindow_multithreaded();
     test_PeekMessage();
     test_PeekMessage2();
     test_PeekMessage3();
