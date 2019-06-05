@@ -5041,12 +5041,27 @@ static void test_WM_DEVICECHANGE(HWND hwnd)
     }
 }
 
-static DWORD CALLBACK show_window_thread(LPVOID arg)
+static DWORD CALLBACK hide_window_thread(LPVOID arg)
 {
    HWND hwnd = arg;
 
    /* function will not return if ShowWindow(SW_HIDE) calls SendMessage() */
    ok(ShowWindow(hwnd, SW_HIDE) == FALSE, "ShowWindow(SW_HIDE) expected FALSE\n");
+
+   return 0;
+}
+
+struct show_window_thread_data {
+    HWND hwnd;
+    int cmd;
+};
+
+static DWORD CALLBACK show_window_thread(LPVOID arg)
+{
+   struct show_window_thread_data *d = arg;
+
+   /* function will not return if ShowWindow() calls SendMessage() */
+   ok(ShowWindow(d->hwnd, d->cmd) != FALSE, "ShowWindow(%i) expected nonzero\n", d->cmd);
 
    return 0;
 }
@@ -5071,6 +5086,38 @@ static void test_msg_setpos_(const struct message *expected_list, UINT flags, BO
 /* test if we receive the right sequence of messages */
 static void test_messages(void)
 {
+    static const struct
+    {
+        const char context[255];
+        int initial_cmd;
+        int target_cmd;
+    } show_window_tests[] = {
+        { "ShowWindow(SW_SHOW):overlapped restored",
+          SW_SHOW, SW_SHOW },
+        { "ShowWindow(SW_SHOWNOACTIVATE):overlapped restored",
+          SW_SHOW, SW_SHOWNOACTIVATE },
+        { "ShowWindow(SW_RESTORE):overlapped restored",
+          SW_SHOW, SW_RESTORE },
+        { "ShowWindow(SW_SHOWNORMAL):overlapped restored",
+          SW_SHOW, SW_SHOWNORMAL },
+        { "ShowWindow(SW_SHOWDEFAULT):overlapped restored",
+          SW_SHOW, SW_SHOWDEFAULT },
+
+        { "ShowWindow(SW_SHOWMINNOACTIVE):overlapped minimized",
+          SW_MINIMIZE, SW_SHOWMINNOACTIVE },
+        { "ShowWindow(SW_MINIMIZE):overlapped minimized",
+          SW_MINIMIZE, SW_MINIMIZE },
+        { "ShowWindow(SW_SHOWMINIMIZED):overlapped minimized",
+          SW_MINIMIZE, SW_SHOWMINIMIZED },
+        { "ShowWindow(SW_SHOW):overlapped minimized",
+          SW_MINIMIZE, SW_SHOW },
+
+        { "ShowWindow(SW_SHOWMAXIMIZED):overlapped maximized",
+          SW_SHOWMAXIMIZED, SW_SHOWMAXIMIZED },
+        { "ShowWindow(SW_SHOW):overlapped maximized",
+          SW_SHOWMAXIMIZED, SW_SHOW },
+    };
+
     DWORD tid;
     HANDLE hthread;
     HWND hwnd, hparent, hchild;
@@ -5080,6 +5127,8 @@ static void test_messages(void)
     LRESULT res;
     POINT pos;
     BOOL ret;
+    int i;
+    struct show_window_thread_data swtd;
 
     flush_sequence();
 
@@ -5112,7 +5161,7 @@ static void test_messages(void)
     ok_sequence(WmEmptySeq, "ShowWindow(SW_HIDE):overlapped", FALSE);
 
     /* test ShowWindow(SW_HIDE) on a hidden window -  multi-threaded */
-    hthread = CreateThread(NULL, 0, show_window_thread, hwnd, 0, &tid);
+    hthread = CreateThread(NULL, 0, hide_window_thread, hwnd, 0, &tid);
     ok(hthread != NULL, "CreateThread failed, error %d\n", GetLastError());
     ok(WaitForSingleObject(hthread, INFINITE) == WAIT_OBJECT_0, "WaitForSingleObject failed\n");
     CloseHandle(hthread);
@@ -5153,9 +5202,28 @@ static void test_messages(void)
         flush_sequence();
     }
 
+    /* test ShowWindow(SW_SHOW) on a visible window - single threaded */
     ShowWindow(hwnd, SW_SHOW);
     flush_events();
     ok_sequence(WmOptionalPaint, "ShowWindow(SW_SHOW):overlapped already visible", FALSE);
+
+    /* test ShowWindow() on a visible window - multi-threaded */
+    for (i = 0; i < ARRAY_SIZE(show_window_tests); ++i)
+    {
+        ShowWindow(hwnd, show_window_tests[i].initial_cmd);
+        flush_events();
+        flush_sequence();
+
+        swtd.hwnd = hwnd;
+        swtd.cmd = show_window_tests[i].target_cmd;
+        hthread = CreateThread(NULL, 0, show_window_thread, &swtd, 0, &tid);
+        ok(hthread != NULL, "CreateThread failed, error %d\n", GetLastError());
+        ok(WaitForSingleObject(hthread, 3000) == WAIT_OBJECT_0,
+           "%s: WaitForSingleObject failed\n", show_window_tests[i].context);
+        CloseHandle(hthread);
+        flush_events();
+        ok_sequence(WmOptionalPaint, show_window_tests[i].context, FALSE);
+    }
 
     SetWindowPos(hwnd, 0,0,0,0,0, SWP_HIDEWINDOW|SWP_NOSIZE|SWP_NOMOVE);
     ok_sequence(WmSWP_HideOverlappedSeq, "SetWindowPos:SWP_HIDEWINDOW:overlapped", FALSE);
