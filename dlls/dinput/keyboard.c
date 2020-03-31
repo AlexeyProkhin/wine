@@ -130,6 +130,11 @@ static int KeyboardCallback( LPDIRECTINPUTDEVICE8A iface, WPARAM wparam, LPARAM 
     }
     new_diks = hook->flags & LLKHF_UP ? 0 : 0x80;
 
+    if ((hook->flags & LLKHF_INJECTED) && dik_code == DIK_F8) {
+        TRACE("Workaround for GTA 4 gamepad bug\n");
+        return ret;
+    }
+
     /* returns now if key event already known */
     if (new_diks == This->DInputKeyState[dik_code])
         return ret;
