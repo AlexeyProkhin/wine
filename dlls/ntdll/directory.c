@@ -2564,7 +2564,7 @@ static NTSTATUS lookup_unix_name( const WCHAR *name, int name_len, char **buffer
                                   UINT disposition, BOOLEAN check_case )
 {
     NTSTATUS status;
-    int ret, used_default, len;
+    int ret = 0, used_default = 0, len;
     struct stat st;
     char *unix_name = *buffer;
     const BOOL redirect = nb_redirects && ntdll_get_thread_data()->wow64_redir;
@@ -2578,8 +2578,11 @@ static NTSTATUS lookup_unix_name( const WCHAR *name, int name_len, char **buffer
     }
 
     unix_name[pos] = '/';
-    ret = ntdll_wcstoumbs( 0, name, name_len, unix_name + pos + 1, unix_len - pos - 2,
-                           NULL, &used_default );
+    if (name_len)
+    {
+        ret = ntdll_wcstoumbs( 0, name, name_len, unix_name + pos + 1, unix_len - pos - 2,
+                               NULL, &used_default );
+    }
 
     if (ret >= 0 && !used_default)  /* if we used the default char the name didn't convert properly */
     {

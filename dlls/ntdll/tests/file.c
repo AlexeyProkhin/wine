@@ -395,6 +395,7 @@ static void open_file_test(void)
     if (!status) CloseHandle( handle );
 
     /* try with empty name */
+    nameW.Buffer = 0;
     nameW.Length = 0;
     status = pNtOpenFile( &handle, GENERIC_READ, &attr, &io,
                           FILE_SHARE_READ|FILE_SHARE_WRITE, FILE_DIRECTORY_FILE );
