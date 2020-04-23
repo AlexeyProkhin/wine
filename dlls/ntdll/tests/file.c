@@ -5360,6 +5360,41 @@ cleanup:
     RemoveDirectoryW(path);
 }
 
+static DWORD WINAPI io_thread(void *data)
+{
+    HANDLE h = (HANDLE)data;
+    OVERLAPPED *pov;
+    NTSTATUS error;
+    ULONG_PTR key;
+    DWORD count;
+    BOOL ret;
+
+    ret = GetQueuedCompletionStatus( h, &count, &key, &pov, 3000 );
+    error = GetLastError();
+    ok( !ret, "GetQueuedCompletionStatus succeeded\n" );
+    ok( error == ERROR_ABANDONED_WAIT_0, "expected ERROR_ABANDONED_WAIT_0, got %#x\n", error );
+
+    return 0;
+}
+
+static void test_close_io_completion(void)
+{
+    HANDLE h, hThread;
+    NTSTATUS res;
+
+    res = pNtCreateIoCompletion( &h, IO_COMPLETION_ALL_ACCESS, NULL, 0 );
+    ok( res == STATUS_SUCCESS, "NtCreateIoCompletion failed: %#x\n", res );
+    ok( h && h != INVALID_HANDLE_VALUE, "got invalid handle %p\n", h );
+
+    hThread = CreateThread( NULL, 0, io_thread, h, 0, NULL );
+    Sleep( 400 );
+
+    CloseHandle( h );
+
+    ok( WaitForSingleObject( hThread, 10000 ) == 0, "wait failed\n" );
+    CloseHandle( hThread );
+}
+
 START_TEST(file)
 {
     HMODULE hkernel32 = GetModuleHandleA("kernel32.dll");
@@ -5432,4 +5467,5 @@ START_TEST(file)
     test_ioctl();
     test_flush_buffers_file();
     test_reparse_points();
+    test_close_io_completion();
 }
